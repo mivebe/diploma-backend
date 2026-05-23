@@ -1,0 +1,20 @@
+app = "gatherly-api"
+primary_region = "fra"
+
+[build]
+
+[env]
+  PORT = "8080"
+  JWT_EXPIRES_IN = "24h"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256

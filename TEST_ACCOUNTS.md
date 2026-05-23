@@ -5,7 +5,7 @@ All passwords are the same: **`demo1234`**
 Re-create the data any time with:
 
 ```bash
-cd diploma-backend
+cd gatherly-backend
 npm run seed
 ```
 
