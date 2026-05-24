@@ -45,13 +45,54 @@ export async function initSchema() {
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         seats INTEGER NOT NULL DEFAULT 1 CHECK (seats > 0),
         status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed','cancelled')),
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(event_id, user_id, status)
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
       `CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_at)`,
       `CREATE INDEX IF NOT EXISTS idx_reservations_event ON reservations(event_id)`,
       `CREATE INDEX IF NOT EXISTS idx_reservations_user ON reservations(user_id)`,
     ],
     'write'
+  );
+
+  await migrateReservationsUniqueIndex();
+}
+
+// The original reservations table had `UNIQUE(event_id, user_id, status)`, which
+// blocked a user from cancelling a re-reservation (two 'cancelled' rows for the
+// same (event, user) pair collided). Rebuild the table without that constraint and
+// enforce uniqueness only on currently-confirmed rows via a partial unique index.
+async function migrateReservationsUniqueIndex() {
+  const tableRes = await db.execute(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='reservations'`
+  );
+  const sqlDef = (tableRes.rows[0] as any)?.sql as string | undefined;
+  const hasOldConstraint =
+    !!sqlDef && /UNIQUE\s*\(\s*event_id\s*,\s*user_id\s*,\s*status\s*\)/i.test(sqlDef);
+
+  if (hasOldConstraint) {
+    await db.batch(
+      [
+        `CREATE TABLE reservations_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          seats INTEGER NOT NULL DEFAULT 1 CHECK (seats > 0),
+          status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('confirmed','cancelled')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `INSERT INTO reservations_new (id, event_id, user_id, seats, status, created_at)
+           SELECT id, event_id, user_id, seats, status, created_at FROM reservations`,
+        `DROP TABLE reservations`,
+        `ALTER TABLE reservations_new RENAME TO reservations`,
+        `CREATE INDEX idx_reservations_event ON reservations(event_id)`,
+        `CREATE INDEX idx_reservations_user ON reservations(user_id)`,
+      ],
+      'write'
+    );
+  }
+
+  await db.execute(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_reservations_confirmed_unique
+       ON reservations(event_id, user_id) WHERE status='confirmed'`
   );
 }
